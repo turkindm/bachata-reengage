@@ -2,30 +2,24 @@ package tasks
 
 import (
 	"context"
-	"log"
 )
 
-type Pinger interface {
-	Ping(context.Context) error
+type Runner interface {
+	Run(context.Context) error
 }
 
 type SyncTask struct {
-	client Pinger
-	logger *log.Logger
+	service Runner
 }
 
-func NewSyncTask(client Pinger, logger *log.Logger) *SyncTask {
-	return &SyncTask{
-		client: client,
-		logger: logger,
-	}
+func NewSyncTask(service Runner) *SyncTask {
+	return &SyncTask{service: service}
 }
 
 func (t *SyncTask) Name() string {
-	return "api-health-sync"
+	return "reminder-sync"
 }
 
 func (t *SyncTask) Run(ctx context.Context) error {
-	t.logger.Printf("task %q started", t.Name())
-	return t.client.Ping(ctx)
+	return t.service.Run(ctx)
 }
