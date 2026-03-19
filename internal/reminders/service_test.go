@@ -50,7 +50,7 @@ func (noopMetrics) ObserveCancellation()   {}
 
 func newService(src *fakeSource, st *memoryStore) *Service {
 	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
-	return NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false, 0)
+	return NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, 72*time.Hour, 96*time.Hour, false, 0)
 }
 
 func TestServiceSendsFirstReminderOnDayThree(t *testing.T) {
@@ -63,7 +63,7 @@ func TestServiceSendsFirstReminderOnDayThree(t *testing.T) {
 			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-73 * time.Hour)}},
 		}},
 	}
-	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false, 0)
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, 72*time.Hour, 96*time.Hour, false, 0)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -88,7 +88,7 @@ func TestServiceSkipsFirstReminderBefore72Hours(t *testing.T) {
 			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-48 * time.Hour)}},
 		}},
 	}
-	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false, 0)
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, 72*time.Hour, 96*time.Hour, false, 0)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -115,7 +115,7 @@ func TestServiceSendsFirstReminderAfterOperatorWroteLast(t *testing.T) {
 			},
 		}},
 	}
-	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false, 0)
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, 72*time.Hour, 96*time.Hour, false, 0)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -151,7 +151,7 @@ func TestServiceSendsSecondReminderOnDaySeven(t *testing.T) {
 			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-7 * 24 * time.Hour)}},
 		}},
 	}
-	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false, 0)
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, 72*time.Hour, 96*time.Hour, false, 0)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -186,7 +186,7 @@ func TestServiceSkipsSecondReminderBefore4Days(t *testing.T) {
 			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-6 * 24 * time.Hour)}},
 		}},
 	}
-	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false, 0)
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, 72*time.Hour, 96*time.Hour, false, 0)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -221,7 +221,7 @@ func TestServiceCancelsSecondReminderWhenPhoneArrives(t *testing.T) {
 			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-5 * 24 * time.Hour)}},
 		}},
 	}
-	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false, 0)
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, 72*time.Hour, 96*time.Hour, false, 0)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -278,7 +278,7 @@ func TestServiceDryRunDoesNotCallSendMessage(t *testing.T) {
 			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-73 * time.Hour)}},
 		}},
 	}
-	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, true, 0)
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, 72*time.Hour, 96*time.Hour, true, 0)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)

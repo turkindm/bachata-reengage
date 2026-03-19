@@ -14,6 +14,8 @@ const (
 	defaultRequestTimeout = 15 * time.Second
 	defaultLookbackWindow = 8 * 24 * time.Hour // 8 days (API max is 14 days)
 	defaultMetricsAddr    = ":8080"
+	defaultFirstDelay     = 72 * time.Hour // 3 days
+	defaultSecondDelay    = 96 * time.Hour // 4 days after first = day 7
 )
 
 type Config struct {
@@ -25,9 +27,11 @@ type Config struct {
 	TaskTimeout    time.Duration
 	RequestTimeout time.Duration
 	LookbackWindow time.Duration
+	FirstDelay     time.Duration
+	SecondDelay    time.Duration
 	MetricsAddr    string
 	DryRun         bool
-	TestDialogID   int64 // if non-zero: process only this dialog, run once and exit
+	TestDialogID   int64 // if non-zero: process only this dialog
 }
 
 func Load() (Config, error) {
@@ -40,6 +44,8 @@ func Load() (Config, error) {
 		TaskTimeout:    durationEnv("TASK_TIMEOUT", defaultTaskTimeout),
 		RequestTimeout: durationEnv("REQUEST_TIMEOUT", defaultRequestTimeout),
 		LookbackWindow: durationEnv("LOOKBACK_WINDOW", defaultLookbackWindow),
+		FirstDelay:     durationEnv("FIRST_REMINDER_DELAY", defaultFirstDelay),
+		SecondDelay:    durationEnv("SECOND_REMINDER_DELAY", defaultSecondDelay),
 		MetricsAddr:    getenv("METRICS_ADDR", defaultMetricsAddr),
 		DryRun:         os.Getenv("DRY_RUN") == "true",
 		TestDialogID:   int64Env("TEST_DIALOG_ID"),

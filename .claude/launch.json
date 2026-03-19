@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "bachata-reengage",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/reengage/main.go"],
+      "port": 8080
+    }
+  ]
+}

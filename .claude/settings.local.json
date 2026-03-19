@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/turkin/Develop/Projects/drivechat/bachata-reengage -type f -name *.go -o -name *.json -o -name *.md -o -name *.yaml -o -name *.yml -o -name *.toml -o -name .env*)",
+      "Bash(find /Users/turkin/Develop/Projects/drivechat/bachata-reengage -type f \\\\\\(-name *.go -o -name *.json -o -name *.md -o -name *.yaml -o -name *.yml -o -name Makefile -o -name .env* \\\\\\) ! -path */.git/* ! -path */.claude/settings.local.json)",
+      "Bash(grep -r \"TODO\\\\|FIXME\\\\|XXX\\\\|HACK\\\\|unused\\\\|deprecated\" --include=*.go)",
+      "Bash(go vet:*)",
+      "Bash(find /Users/turkin/Develop/Projects/drivechat/bachata-reengage -not -path */.* -type f)",
+      "Bash(go build:*)",
+      "WebFetch(domain:lk.bachata.tech)",
+      "Bash(curl -s \"https://lk.bachata.tech/cabinet/json-doc/cabinetRestApi/v1.0/sender,online,dealer,cabinet,fileshare/specification.json\")",
+      "Bash(python3:*)",
+      "Bash(go test:*)",
+      "Bash(xargs kill:*)",
+      "Bash(docker ps:*)",
+      "Bash(open -a Docker)",
+      "Bash(docker run:*)",
+      "Bash(docker exec:*)",
+      "Bash(go get:*)",
+      "Bash(go mod:*)",
+      "Bash(docker compose:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

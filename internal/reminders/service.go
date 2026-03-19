@@ -76,7 +76,7 @@ type Service struct {
 	testDialogID int64 // if non-zero: process only this dialog
 }
 
-func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics, now func() time.Time, lookback time.Duration, dryRun bool, testDialogID int64) *Service {
+func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics, now func() time.Time, lookback, firstDelay, secondDelay time.Duration, dryRun bool, testDialogID int64) *Service {
 	if now == nil {
 		now = time.Now
 	}
@@ -88,8 +88,8 @@ func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics,
 		metrics:      metrics,
 		now:          now,
 		lookback:     lookback,
-		firstDelay:   72 * time.Hour,
-		secondDelay:  96 * time.Hour, // 4 days after first reminder = day 7
+		firstDelay:   firstDelay,
+		secondDelay:  secondDelay,
 		dryRun:       dryRun,
 		testDialogID: testDialogID,
 	}
