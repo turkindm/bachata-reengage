@@ -217,7 +217,27 @@ func (s *Service) send(ctx context.Context, dialog Dialog, text string) error {
 		)
 		return nil
 	}
-	return s.source.SendMessage(ctx, dialog.ClientID, text)
+
+	start := time.Now()
+	err := s.source.SendMessage(ctx, dialog.ClientID, text)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		s.logger.Error("failed to send message",
+			zap.Int64("dialog_id", dialog.ID),
+			zap.String("client_id", dialog.ClientID),
+			zap.Duration("elapsed", elapsed),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	s.logger.Info("message sent",
+		zap.Int64("dialog_id", dialog.ID),
+		zap.String("client_id", dialog.ClientID),
+		zap.Duration("elapsed", elapsed),
+	)
+	return nil
 }
 
 func filterDialogs(dialogs []Dialog, id int64) []Dialog {
