@@ -1,31 +1,25 @@
 package tasks
 
-import (
-	"context"
-	"log"
-)
+import "context"
 
-type Pinger interface {
-	Ping(context.Context) error
+// Runner is anything that can execute a sync run.
+type Runner interface {
+	Run(context.Context) error
 }
 
+// SyncTask wraps a Runner and gives it a stable Name() for the scheduler.
 type SyncTask struct {
-	client Pinger
-	logger *log.Logger
+	runner Runner
 }
 
-func NewSyncTask(client Pinger, logger *log.Logger) *SyncTask {
-	return &SyncTask{
-		client: client,
-		logger: logger,
-	}
+func NewSyncTask(runner Runner) *SyncTask {
+	return &SyncTask{runner: runner}
 }
 
 func (t *SyncTask) Name() string {
-	return "api-health-sync"
+	return "reminder-sync"
 }
 
 func (t *SyncTask) Run(ctx context.Context) error {
-	t.logger.Printf("task %q started", t.Name())
-	return t.client.Ping(ctx)
+	return t.runner.Run(ctx)
 }

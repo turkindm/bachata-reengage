@@ -2,18 +2,28 @@ package app
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"net"
 	"net/http"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/turkindm/bachata-reengage/internal/api"
 	"github.com/turkindm/bachata-reengage/internal/config"
+	"github.com/turkindm/bachata-reengage/internal/metrics"
+	"github.com/turkindm/bachata-reengage/internal/reminders"
 	"github.com/turkindm/bachata-reengage/internal/scheduler"
+	"github.com/turkindm/bachata-reengage/internal/store"
 	"github.com/turkindm/bachata-reengage/internal/tasks"
 )
 
+// App wires all components and runs the scheduler + metrics server.
 type App struct {
-	scheduler *scheduler.Scheduler
+	scheduler   *scheduler.Scheduler
+	logger      *zap.Logger
+	metricsHTTP *http.Server
+	closeStore  func() error
 }
 
 func New() (*App, error) {
@@ -22,15 +32,28 @@ func New() (*App, error) {
 		return nil, err
 	}
 
-	httpClient := &http.Client{
-		Timeout: cfg.RequestTimeout,
+	logger, err := zap.NewProduction()
+	if err != nil {
+		return nil, fmt.Errorf("build logger: %w", err)
 	}
 
-	apiClient := api.NewClient(cfg.APIBaseURL, cfg.APIKey, httpClient)
+	initCtx, cancel := context.WithTimeout(context.Background(), cfg.TaskTimeout)
+	defer cancel()
 
-	logger := log.New(log.Writer(), "reengage ", log.LstdFlags|log.Lmsgprefix)
-	task := tasks.NewSyncTask(apiClient, logger)
+	pgStore, err := store.Open(initCtx, cfg.DatabaseURL)
+	if err != nil {
+		return nil, err
+	}
 
+	httpClient := &http.Client{Timeout: cfg.RequestTimeout}
+	apiClient := api.NewClient(cfg.APIBaseURL, cfg.APIToken, httpClient)
+	svcMetrics := metrics.New()
+
+	source := &chatSource{client: apiClient}
+	service := reminders.NewService(source, pgStore, logger, svcMetrics, time.Now, cfg.LookbackWindow)
+	task := tasks.NewSyncTask(service)
+
+	stdLogger := zap.NewStdLog(logger)
 	schedule := scheduler.Schedule{
 		Name:     task.Name(),
 		Interval: cfg.PollInterval,
@@ -38,20 +61,105 @@ func New() (*App, error) {
 		Run:      task.Run,
 	}
 
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", svcMetrics.Handler())
+
 	return &App{
-		scheduler: scheduler.New(logger, schedule),
+		scheduler: scheduler.New(stdLogger, schedule),
+		logger:    logger,
+		metricsHTTP: &http.Server{
+			Addr:    cfg.MetricsAddr,
+			Handler: mux,
+			BaseContext: func(net.Listener) context.Context {
+				return context.Background()
+			},
+		},
+		closeStore: pgStore.Close,
 	}, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
-	return a.scheduler.Run(ctx)
+	errCh := make(chan error, 1)
+	go func() {
+		if err := a.metricsHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("run metrics server: %w", err)
+		}
+	}()
+
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = a.metricsHTTP.Shutdown(shutdownCtx)
+		_ = a.closeStore()
+		_ = a.logger.Sync()
+	}()
+
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- a.scheduler.Run(ctx)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case err := <-runDone:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// chatSource adapts api.Client to the reminders.Source interface.
+type chatSource struct {
+	client *api.Client
+}
+
+func (s *chatSource) ListRecentClientMessages(ctx context.Context, start, stop time.Time) ([]reminders.Message, error) {
+	apiMsgs, err := s.client.ListRecentClientMessages(ctx, start, stop)
+	if err != nil {
+		return nil, err
+	}
+
+	msgs := make([]reminders.Message, 0, len(apiMsgs))
+	for _, m := range apiMsgs {
+		msgs = append(msgs, reminders.Message{
+			DialogID: m.DialogID,
+			WhoSend:  m.WhoSend,
+			SentAt:   m.DateTimeUTC,
+		})
+	}
+
+	return msgs, nil
+}
+
+func (s *chatSource) GetDialog(ctx context.Context, dialogID int64) (reminders.Dialog, error) {
+	d, err := s.client.GetDialog(ctx, dialogID)
+	if err != nil {
+		return reminders.Dialog{}, err
+	}
+
+	msgs := make([]reminders.Message, 0, len(d.Messages))
+	for _, m := range d.Messages {
+		msgs = append(msgs, reminders.Message{
+			DialogID: m.DialogID,
+			WhoSend:  m.WhoSend,
+			SentAt:   m.DateTimeUTC,
+		})
+	}
+
+	return reminders.Dialog{
+		ID:       d.ID,
+		ClientID: d.ClientID,
+		Phone:    d.Phone,
+		Messages: msgs,
+	}, nil
 }
 
 func maxDuration(values ...time.Duration) time.Duration {
 	var max time.Duration
-	for _, value := range values {
-		if value > max {
-			max = value
+	for _, v := range values {
+		if v > max {
+			max = v
 		}
 	}
 
