@@ -3,34 +3,53 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
 const (
+	defaultAPIBaseURL     = "https://lk.bachata.tech/json/v1.0"
 	defaultPollInterval   = time.Minute
 	defaultTaskTimeout    = 30 * time.Second
 	defaultRequestTimeout = 15 * time.Second
+	defaultLookbackWindow = 8 * 24 * time.Hour // 8 days (API max is 14 days)
+	defaultPageLimit      = 200
+	defaultMetricsAddr    = ":8080"
 )
 
 type Config struct {
 	APIBaseURL     string
-	APIKey         string
+	APIToken       string
+	DatabaseURL    string
 	PollInterval   time.Duration
 	TaskTimeout    time.Duration
 	RequestTimeout time.Duration
+	LookbackWindow time.Duration
+	MetricsAddr    string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		APIBaseURL:     getenv("API_BASE_URL", "https://api.example.com"),
-		APIKey:         os.Getenv("API_KEY"),
+		APIBaseURL:     getenv("API_BASE_URL", defaultAPIBaseURL),
+		APIToken:       os.Getenv("API_TOKEN"),
+		DatabaseURL:    os.Getenv("DATABASE_URL"),
 		PollInterval:   durationEnv("POLL_INTERVAL", defaultPollInterval),
 		TaskTimeout:    durationEnv("TASK_TIMEOUT", defaultTaskTimeout),
 		RequestTimeout: durationEnv("REQUEST_TIMEOUT", defaultRequestTimeout),
+		LookbackWindow: durationEnv("LOOKBACK_WINDOW", defaultLookbackWindow),
+		MetricsAddr:    getenv("METRICS_ADDR", defaultMetricsAddr),
 	}
 
-	if cfg.APIKey == "" {
-		return Config{}, fmt.Errorf("API_KEY is required")
+	if cfg.APIToken == "" {
+		return Config{}, fmt.Errorf("API_TOKEN is required")
+	}
+
+	if cfg.DatabaseURL == "" {
+		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+
+	if cfg.LookbackWindow <= 0 {
+		return Config{}, fmt.Errorf("LOOKBACK_WINDOW must be positive")
 	}
 
 	return cfg, nil
@@ -52,6 +71,20 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
+		return fallback
+	}
+
+	return parsed
+}
+
+func intEnv(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
 		return fallback
 	}
 
