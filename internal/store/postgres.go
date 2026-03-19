@@ -47,7 +47,7 @@ func (s *Store) Close() error {
 func (s *Store) Get(ctx context.Context, chatID int64) (reminders.ChatState, bool, error) {
 	const q = `
 		SELECT chat_id, client_id, status, phone,
-		       last_client_message_at, first_reminder_at, second_reminder_at, updated_at
+		       last_message_at, first_reminder_at, second_reminder_at, updated_at
 		FROM reminder_chats
 		WHERE chat_id = $1`
 
@@ -57,7 +57,7 @@ func (s *Store) Get(ctx context.Context, chatID int64) (reminders.ChatState, boo
 		&state.ClientID,
 		&state.Status,
 		&state.Phone,
-		&state.LastClientMessageAt,
+		&state.LastMessageAt,
 		&state.FirstReminderAt,
 		&state.SecondReminderAt,
 		&state.UpdatedAt,
@@ -78,21 +78,21 @@ func (s *Store) Save(ctx context.Context, state reminders.ChatState) error {
 	const q = `
 		INSERT INTO reminder_chats
 		    (chat_id, client_id, status, phone,
-		     last_client_message_at, first_reminder_at, second_reminder_at, updated_at)
+		     last_message_at, first_reminder_at, second_reminder_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (chat_id) DO UPDATE SET
-		    status                 = EXCLUDED.status,
-		    phone                  = EXCLUDED.phone,
-		    first_reminder_at      = EXCLUDED.first_reminder_at,
-		    second_reminder_at     = EXCLUDED.second_reminder_at,
-		    updated_at             = EXCLUDED.updated_at`
+		    status            = EXCLUDED.status,
+		    phone             = EXCLUDED.phone,
+		    first_reminder_at = EXCLUDED.first_reminder_at,
+		    second_reminder_at = EXCLUDED.second_reminder_at,
+		    updated_at        = EXCLUDED.updated_at`
 
 	_, err := s.pool.Exec(ctx, q,
 		state.ChatID,
 		state.ClientID,
 		state.Status,
 		state.Phone,
-		state.LastClientMessageAt,
+		state.LastMessageAt,
 		state.FirstReminderAt,
 		state.SecondReminderAt,
 		state.UpdatedAt,
@@ -107,16 +107,25 @@ func (s *Store) Save(ctx context.Context, state reminders.ChatState) error {
 func (s *Store) ensureSchema(ctx context.Context) error {
 	const ddl = `
 		CREATE TABLE IF NOT EXISTS reminder_chats (
-			chat_id                BIGINT      PRIMARY KEY,
-			client_id              TEXT        NOT NULL,
-			status                 TEXT        NOT NULL,
-			phone                  TEXT        NOT NULL DEFAULT '',
-			last_client_message_at TIMESTAMPTZ NOT NULL,
-			first_reminder_at      TIMESTAMPTZ,
-			second_reminder_at     TIMESTAMPTZ,
-			updated_at             TIMESTAMPTZ NOT NULL,
-			created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`
+			chat_id           BIGINT      PRIMARY KEY,
+			client_id         TEXT        NOT NULL,
+			status            TEXT        NOT NULL,
+			phone             TEXT        NOT NULL DEFAULT '',
+			last_message_at   TIMESTAMPTZ NOT NULL,
+			first_reminder_at TIMESTAMPTZ,
+			second_reminder_at TIMESTAMPTZ,
+			updated_at        TIMESTAMPTZ NOT NULL,
+			created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'reminder_chats' AND column_name = 'last_client_message_at'
+			) THEN
+				ALTER TABLE reminder_chats RENAME COLUMN last_client_message_at TO last_message_at;
+			END IF;
+		END $$;`
 
 	if _, err := s.pool.Exec(ctx, ddl); err != nil {
 		return fmt.Errorf("ensure schema: %w", err)

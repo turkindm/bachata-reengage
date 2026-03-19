@@ -1,28 +1,71 @@
 # bachata-reengage
 
-Базовый каркас Go-сервиса для интеграции с внешним API и выполнения периодических задач по расписанию.
+Go-сервис повторного вовлечения клиентов через чат Bachata. Периодически опрашивает API, обнаруживает диалоги, в которых клиент не получил ответа, и фиксирует моменты отправки напоминаний.
+
+## Логика напоминаний
+
+1. **Первое напоминание** — в диалоге тишина ≥ 3 дней, телефон не получен → состояние `waiting_second`.
+2. **Второе напоминание** — прошло ≥ 4 дней после первого (≈ день 7), телефон по-прежнему не получен → состояние `completed`.
+3. **Отмена** — между первым и вторым напоминанием появился телефон → состояние `phone_received`, второе напоминание не отправляется.
 
 ## Структура
 
-- `cmd/reengage` - точка входа приложения
-- `internal/app` - композиция зависимостей и запуск scheduler
-- `internal/config` - чтение конфигурации из переменных окружения
-- `internal/api` - минимальный HTTP-клиент для внешнего API
-- `internal/scheduler` - цикл периодического выполнения задач
-- `internal/tasks` - задачи сервиса
-- `configs/.env.example` - пример переменных окружения
+```
+cmd/reengage/       — точка входа
+internal/app/       — сборка зависимостей, запуск scheduler + metrics server
+internal/config/    — конфигурация из переменных окружения
+internal/api/       — HTTP-клиент Bachata API
+internal/reminders/ — бизнес-логика напоминаний
+internal/store/     — PostgreSQL-хранилище состояний
+internal/scheduler/ — цикл периодического выполнения задач
+internal/tasks/     — задача sync (запускает reminders.Service)
+internal/metrics/   — Prometheus-метрики
+configs/            — .env.example
+```
+
+## Переменные окружения
+
+| Переменная        | Обязательная | По умолчанию                         | Описание                            |
+|-------------------|:------------:|--------------------------------------|-------------------------------------|
+| `API_TOKEN`       | ✓            | —                                    | Токен Bachata API                   |
+| `DATABASE_URL`    | ✓            | —                                    | PostgreSQL DSN                      |
+| `API_BASE_URL`    |              | `https://lk.bachata.tech/json/v1.0`  | Базовый URL API                     |
+| `POLL_INTERVAL`   |              | `1m`                                 | Интервал опроса                     |
+| `TASK_TIMEOUT`    |              | `30s`                                | Таймаут одного запуска задачи       |
+| `REQUEST_TIMEOUT` |              | `15s`                                | Таймаут HTTP-запроса к API          |
+| `LOOKBACK_WINDOW` |              | `192h` (8 дней)                      | Глубина поиска сообщений            |
+| `METRICS_ADDR`    |              | `:8080`                              | Адрес HTTP-сервера метрик           |
 
 ## Запуск
 
-1. Скопируйте `configs/.env.example` в `.env` или экспортируйте переменные окружения вручную.
-2. Установите минимум `API_KEY`.
-3. Запустите сервис:
+### Docker Compose (рекомендуется)
 
 ```bash
-API_KEY=replace-me go run ./cmd/reengage
+cp configs/.env.example configs/.env
+# укажите API_TOKEN и OPERATOR_LOGIN в configs/.env
+
+docker compose up -d
 ```
 
-Сервис сразу выполнит задачу один раз, затем будет повторять её с интервалом `POLL_INTERVAL`.
+Поднимает PostgreSQL и сервис. Данные БД сохраняются в volume `postgres_data`.
+
+### Локально (без Docker)
+
+```bash
+cp configs/.env.example configs/.env
+# укажите API_TOKEN, OPERATOR_LOGIN и DATABASE_URL в configs/.env
+
+docker compose up -d postgres   # только БД
+
+export $(grep -v '^#' configs/.env | xargs)
+go run ./cmd/reengage
+```
+
+### Dry-run (без реальной отправки)
+
+Установите `DRY_RUN=true` в `configs/.env` — сервис будет логировать сообщения, но не отправлять их.
+
+Метрики Prometheus доступны на `http://localhost:8080/metrics`.
 
 ## Проверка
 

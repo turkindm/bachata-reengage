@@ -9,16 +9,17 @@ import (
 )
 
 type fakeSource struct {
-	list    []Message
-	dialogs map[int64]Dialog
+	dialogs []Dialog
+	sent    []string // collected texts from SendMessage calls
 }
 
-func (f *fakeSource) ListRecentClientMessages(context.Context, time.Time, time.Time) ([]Message, error) {
-	return f.list, nil
+func (f *fakeSource) ListDialogs(_ context.Context, _, _ time.Time) ([]Dialog, error) {
+	return f.dialogs, nil
 }
 
-func (f *fakeSource) GetDialog(_ context.Context, id int64) (Dialog, error) {
-	return f.dialogs[id], nil
+func (f *fakeSource) SendMessage(_ context.Context, _, text string) error {
+	f.sent = append(f.sent, text)
+	return nil
 }
 
 type memoryStore struct {
@@ -49,22 +50,20 @@ func (noopMetrics) ObserveCancellation()   {}
 
 func newService(src *fakeSource, st *memoryStore) *Service {
 	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
-	return NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour)
+	return NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false)
 }
 
 func TestServiceSendsFirstReminderOnDayThree(t *testing.T) {
 	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
 	st := newMemoryStore()
-	svc := NewService(&fakeSource{
-		list: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-73 * time.Hour)}},
-		dialogs: map[int64]Dialog{
-			10: {
-				ID:       10,
-				ClientID: "c-1",
-				Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-73 * time.Hour)}},
-			},
-		},
-	}, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour)
+	src := &fakeSource{
+		dialogs: []Dialog{{
+			ID:       10,
+			ClientID: "c-1",
+			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-73 * time.Hour)}},
+		}},
+	}
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -74,21 +73,22 @@ func TestServiceSendsFirstReminderOnDayThree(t *testing.T) {
 	if state.Status != StatusWaitingSecond || state.FirstReminderAt == nil {
 		t.Fatalf("unexpected state = %#v", state)
 	}
+	if len(src.sent) != 1 || src.sent[0] != firstReminderText {
+		t.Fatalf("unexpected sent messages = %v", src.sent)
+	}
 }
 
 func TestServiceSkipsFirstReminderBefore72Hours(t *testing.T) {
 	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
 	st := newMemoryStore()
-	svc := NewService(&fakeSource{
-		list: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-48 * time.Hour)}},
-		dialogs: map[int64]Dialog{
-			10: {
-				ID:       10,
-				ClientID: "c-1",
-				Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-48 * time.Hour)}},
-			},
-		},
-	}, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour)
+	src := &fakeSource{
+		dialogs: []Dialog{{
+			ID:       10,
+			ClientID: "c-1",
+			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-48 * time.Hour)}},
+		}},
+	}
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -97,30 +97,61 @@ func TestServiceSkipsFirstReminderBefore72Hours(t *testing.T) {
 	if len(st.items) != 0 {
 		t.Fatalf("expected no state, got %#v", st.items)
 	}
+	if len(src.sent) != 0 {
+		t.Fatalf("expected no messages sent, got %v", src.sent)
+	}
+}
+
+func TestServiceSendsFirstReminderAfterOperatorWroteLast(t *testing.T) {
+	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+	st := newMemoryStore()
+	src := &fakeSource{
+		dialogs: []Dialog{{
+			ID:       10,
+			ClientID: "c-1",
+			Messages: []Message{
+				{DialogID: 10, WhoSend: "client", SentAt: now.Add(-73 * time.Hour)},
+				{DialogID: 10, WhoSend: "operator", SentAt: now.Add(-72 * time.Hour)},
+			},
+		}},
+	}
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false)
+
+	if err := svc.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Last message is from operator 72h ago — exactly at firstDelay threshold, should fire.
+	state := st.items[10]
+	if state.Status != StatusWaitingSecond || state.FirstReminderAt == nil {
+		t.Fatalf("unexpected state = %#v", state)
+	}
+	if len(src.sent) != 1 {
+		t.Fatalf("expected 1 message sent, got %v", src.sent)
+	}
 }
 
 func TestServiceSendsSecondReminderOnDaySeven(t *testing.T) {
 	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+	// First reminder sent exactly 4 days ago → second reminder threshold met.
 	firstAt := now.Add(-4 * 24 * time.Hour)
 	st := newMemoryStore()
 	st.items[10] = ChatState{
-		ChatID:              10,
-		ClientID:            "c-1",
-		Status:              StatusWaitingSecond,
-		LastClientMessageAt: now.Add(-8 * 24 * time.Hour),
-		FirstReminderAt:     &firstAt,
+		ChatID:          10,
+		ClientID:        "c-1",
+		Status:          StatusWaitingSecond,
+		LastMessageAt:   now.Add(-7 * 24 * time.Hour),
+		FirstReminderAt: &firstAt,
 	}
 
-	svc := NewService(&fakeSource{
-		list: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-8 * 24 * time.Hour)}},
-		dialogs: map[int64]Dialog{
-			10: {
-				ID:       10,
-				ClientID: "c-1",
-				Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-8 * 24 * time.Hour)}},
-			},
-		},
-	}, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour)
+	src := &fakeSource{
+		dialogs: []Dialog{{
+			ID:       10,
+			ClientID: "c-1",
+			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-7 * 24 * time.Hour)}},
+		}},
+	}
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -130,6 +161,44 @@ func TestServiceSendsSecondReminderOnDaySeven(t *testing.T) {
 	if state.Status != StatusCompleted || state.SecondReminderAt == nil {
 		t.Fatalf("unexpected state = %#v", state)
 	}
+	if len(src.sent) != 1 || src.sent[0] != secondReminderText {
+		t.Fatalf("unexpected sent messages = %v", src.sent)
+	}
+}
+
+func TestServiceSkipsSecondReminderBefore4Days(t *testing.T) {
+	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+	// First reminder sent only 3 days ago — too early for second.
+	firstAt := now.Add(-3 * 24 * time.Hour)
+	st := newMemoryStore()
+	st.items[10] = ChatState{
+		ChatID:          10,
+		ClientID:        "c-1",
+		Status:          StatusWaitingSecond,
+		LastMessageAt:   now.Add(-6 * 24 * time.Hour),
+		FirstReminderAt: &firstAt,
+	}
+
+	src := &fakeSource{
+		dialogs: []Dialog{{
+			ID:       10,
+			ClientID: "c-1",
+			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-6 * 24 * time.Hour)}},
+		}},
+	}
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false)
+
+	if err := svc.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	state := st.items[10]
+	if state.Status != StatusWaitingSecond {
+		t.Fatalf("expected status waiting_second, got %q", state.Status)
+	}
+	if len(src.sent) != 0 {
+		t.Fatalf("expected no messages sent, got %v", src.sent)
+	}
 }
 
 func TestServiceCancelsSecondReminderWhenPhoneArrives(t *testing.T) {
@@ -137,24 +206,22 @@ func TestServiceCancelsSecondReminderWhenPhoneArrives(t *testing.T) {
 	firstAt := now.Add(-4 * 24 * time.Hour)
 	st := newMemoryStore()
 	st.items[10] = ChatState{
-		ChatID:              10,
-		ClientID:            "c-1",
-		Status:              StatusWaitingSecond,
-		LastClientMessageAt: now.Add(-5 * 24 * time.Hour),
-		FirstReminderAt:     &firstAt,
+		ChatID:          10,
+		ClientID:        "c-1",
+		Status:          StatusWaitingSecond,
+		LastMessageAt:   now.Add(-5 * 24 * time.Hour),
+		FirstReminderAt: &firstAt,
 	}
 
-	svc := NewService(&fakeSource{
-		list: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-5 * 24 * time.Hour)}},
-		dialogs: map[int64]Dialog{
-			10: {
-				ID:       10,
-				ClientID: "c-1",
-				Phone:    "79001234567",
-				Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-5 * 24 * time.Hour)}},
-			},
-		},
-	}, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour)
+	src := &fakeSource{
+		dialogs: []Dialog{{
+			ID:       10,
+			ClientID: "c-1",
+			Phone:    "79001234567",
+			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-5 * 24 * time.Hour)}},
+		}},
+	}
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, false)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -164,31 +231,8 @@ func TestServiceCancelsSecondReminderWhenPhoneArrives(t *testing.T) {
 	if state.Status != StatusPhoneReceived || state.Phone == "" {
 		t.Fatalf("unexpected state = %#v", state)
 	}
-}
-
-func TestServiceSkipsDialogsWhereOperatorWroteLast(t *testing.T) {
-	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
-	st := newMemoryStore()
-	svc := NewService(&fakeSource{
-		list: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-73 * time.Hour)}},
-		dialogs: map[int64]Dialog{
-			10: {
-				ID:       10,
-				ClientID: "c-1",
-				Messages: []Message{
-					{DialogID: 10, WhoSend: "client", SentAt: now.Add(-73 * time.Hour)},
-					{DialogID: 10, WhoSend: "operator", SentAt: now.Add(-72 * time.Hour)},
-				},
-			},
-		},
-	}, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour)
-
-	if err := svc.Run(context.Background()); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	if len(st.items) != 0 {
-		t.Fatalf("expected no state, got %#v", st.items)
+	if len(src.sent) != 0 {
+		t.Fatalf("expected no messages sent on cancellation, got %v", src.sent)
 	}
 }
 
@@ -203,24 +247,49 @@ func TestServiceSkipsAlreadyCompletedDialogs(t *testing.T) {
 		SecondReminderAt: &secondAt,
 	}
 
-	svc := newService(&fakeSource{
-		list: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-8 * 24 * time.Hour)}},
-		dialogs: map[int64]Dialog{
-			10: {
-				ID:       10,
-				ClientID: "c-1",
-				Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-8 * 24 * time.Hour)}},
-			},
-		},
-	}, st)
+	src := &fakeSource{
+		dialogs: []Dialog{{
+			ID:       10,
+			ClientID: "c-1",
+			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-8 * 24 * time.Hour)}},
+		}},
+	}
+
+	if err := newService(src, st).Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	state := st.items[10]
+	if state.Status != StatusCompleted {
+		t.Fatalf("unexpected state = %#v", state)
+	}
+	if len(src.sent) != 0 {
+		t.Fatalf("expected no messages sent, got %v", src.sent)
+	}
+}
+
+func TestServiceDryRunDoesNotCallSendMessage(t *testing.T) {
+	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+	st := newMemoryStore()
+	src := &fakeSource{
+		dialogs: []Dialog{{
+			ID:       10,
+			ClientID: "c-1",
+			Messages: []Message{{DialogID: 10, WhoSend: "client", SentAt: now.Add(-73 * time.Hour)}},
+		}},
+	}
+	svc := NewService(src, st, zap.NewNop(), noopMetrics{}, func() time.Time { return now }, 8*24*time.Hour, true)
 
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	// State should remain Completed, not be updated.
+	// State should be saved but no real API call made.
 	state := st.items[10]
-	if state.Status != StatusCompleted {
+	if state.Status != StatusWaitingSecond {
 		t.Fatalf("unexpected state = %#v", state)
+	}
+	if len(src.sent) != 0 {
+		t.Fatalf("dry run should not call SendMessage, got %v", src.sent)
 	}
 }

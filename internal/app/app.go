@@ -46,11 +46,11 @@ func New() (*App, error) {
 	}
 
 	httpClient := &http.Client{Timeout: cfg.RequestTimeout}
-	apiClient := api.NewClient(cfg.APIBaseURL, cfg.APIToken, httpClient, 80)
+	apiClient := api.NewClient(cfg.APIBaseURL, cfg.APIToken, cfg.OperatorLogin, httpClient, 80)
 	svcMetrics := metrics.New()
 
 	source := &chatSource{client: apiClient}
-	service := reminders.NewService(source, pgStore, logger, svcMetrics, time.Now, cfg.LookbackWindow)
+	service := reminders.NewService(source, pgStore, logger, svcMetrics, time.Now, cfg.LookbackWindow, cfg.DryRun)
 	task := tasks.NewSyncTask(service)
 
 	stdLogger := zap.NewStdLog(logger)
@@ -114,45 +114,35 @@ type chatSource struct {
 	client *api.Client
 }
 
-func (s *chatSource) ListRecentClientMessages(ctx context.Context, start, stop time.Time) ([]reminders.Message, error) {
-	apiMsgs, err := s.client.ListRecentClientMessages(ctx, start, stop)
+func (s *chatSource) ListDialogs(ctx context.Context, start, stop time.Time) ([]reminders.Dialog, error) {
+	apiDialogs, err := s.client.ListDialogs(ctx, start, stop)
 	if err != nil {
 		return nil, err
 	}
 
-	msgs := make([]reminders.Message, 0, len(apiMsgs))
-	for _, m := range apiMsgs {
-		msgs = append(msgs, reminders.Message{
-			DialogID: m.DialogID,
-			WhoSend:  m.WhoSend,
-			SentAt:   m.DateTimeUTC,
+	dialogs := make([]reminders.Dialog, 0, len(apiDialogs))
+	for _, d := range apiDialogs {
+		msgs := make([]reminders.Message, 0, len(d.Messages))
+		for _, m := range d.Messages {
+			msgs = append(msgs, reminders.Message{
+				DialogID: m.DialogID,
+				WhoSend:  m.WhoSend,
+				SentAt:   m.DateTimeUTC,
+			})
+		}
+		dialogs = append(dialogs, reminders.Dialog{
+			ID:       d.ID,
+			ClientID: d.ClientID,
+			Phone:    d.Phone,
+			Messages: msgs,
 		})
 	}
 
-	return msgs, nil
+	return dialogs, nil
 }
 
-func (s *chatSource) GetDialog(ctx context.Context, dialogID int64) (reminders.Dialog, error) {
-	d, err := s.client.GetDialog(ctx, dialogID)
-	if err != nil {
-		return reminders.Dialog{}, err
-	}
-
-	msgs := make([]reminders.Message, 0, len(d.Messages))
-	for _, m := range d.Messages {
-		msgs = append(msgs, reminders.Message{
-			DialogID: m.DialogID,
-			WhoSend:  m.WhoSend,
-			SentAt:   m.DateTimeUTC,
-		})
-	}
-
-	return reminders.Dialog{
-		ID:       d.ID,
-		ClientID: d.ClientID,
-		Phone:    d.Phone,
-		Messages: msgs,
-	}, nil
+func (s *chatSource) SendMessage(ctx context.Context, clientID, text string) error {
+	return s.client.SendMessage(ctx, clientID, text)
 }
 
 func maxDuration(values ...time.Duration) time.Duration {

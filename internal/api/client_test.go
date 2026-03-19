@@ -15,8 +15,8 @@ func (fn roundTripFunc) Do(req *http.Request) (*http.Response, error) {
 	return fn(req)
 }
 
-func TestListRecentClientMessages(t *testing.T) {
-	client := NewClient("https://example.com/", "secret", roundTripFunc(func(req *http.Request) (*http.Response, error) {
+func TestListDialogs(t *testing.T) {
+	client := NewClient("https://example.com/", "secret", "operator", roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != "https://example.com/chat/message/getList" {
 			t.Fatalf("URL = %s", req.URL.String())
 		}
@@ -27,7 +27,6 @@ func TestListRecentClientMessages(t *testing.T) {
 			t.Fatalf("X-Token = %s", got)
 		}
 
-		// Real API returns an array of clients, each with embedded messages.
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body: io.NopCloser(strings.NewReader(`{
@@ -35,6 +34,7 @@ func TestListRecentClientMessages(t *testing.T) {
 				"result": [
 					{
 						"clientId": "client-abc",
+						"phone": "79001234567",
 						"messages": [
 							{
 								"id": 10,
@@ -42,32 +42,52 @@ func TestListRecentClientMessages(t *testing.T) {
 								"whoSend": "client",
 								"text": "hello",
 								"dateTimeUTC": "2026-03-15 12:00:00"
+							},
+							{
+								"id": 11,
+								"dialogId": 99,
+								"whoSend": "operator",
+								"text": "hi there",
+								"dateTimeUTC": "2026-03-15 13:00:00"
 							}
-						],
-						"operators": []
+						]
 					}
 				]
 			}`)),
 		}, nil
 	}), 0)
 
-	msgs, err := client.ListRecentClientMessages(context.Background(), time.Now().Add(-time.Hour), time.Now())
+	dialogs, err := client.ListDialogs(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
-		t.Fatalf("ListRecentClientMessages() error = %v", err)
+		t.Fatalf("ListDialogs() error = %v", err)
 	}
 
-	if len(msgs) != 1 || msgs[0].DialogID != 99 {
-		t.Fatalf("msgs = %#v", msgs)
+	if len(dialogs) != 1 {
+		t.Fatalf("expected 1 dialog, got %d", len(dialogs))
 	}
 
-	want := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
-	if !msgs[0].DateTimeUTC.Equal(want) {
-		t.Fatalf("DateTimeUTC = %v, want %v", msgs[0].DateTimeUTC, want)
+	d := dialogs[0]
+	if d.ID != 99 {
+		t.Fatalf("dialog.ID = %d, want 99", d.ID)
+	}
+	if d.ClientID != "client-abc" {
+		t.Fatalf("dialog.ClientID = %q, want client-abc", d.ClientID)
+	}
+	if d.Phone != "79001234567" {
+		t.Fatalf("dialog.Phone = %q, want 79001234567", d.Phone)
+	}
+	if len(d.Messages) != 2 {
+		t.Fatalf("len(messages) = %d, want 2", len(d.Messages))
+	}
+
+	want := time.Date(2026, 3, 15, 13, 0, 0, 0, time.UTC)
+	if !d.Messages[1].DateTimeUTC.Equal(want) {
+		t.Fatalf("DateTimeUTC = %v, want %v", d.Messages[1].DateTimeUTC, want)
 	}
 }
 
-func TestListRecentClientMessagesMultipleClients(t *testing.T) {
-	client := NewClient("https://example.com", "secret", roundTripFunc(func(req *http.Request) (*http.Response, error) {
+func TestListDialogsMultipleClients(t *testing.T) {
+	client := NewClient("https://example.com", "secret", "operator", roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body: io.NopCloser(strings.NewReader(`{
@@ -75,113 +95,74 @@ func TestListRecentClientMessagesMultipleClients(t *testing.T) {
 				"result": [
 					{
 						"clientId": "c1",
+						"phone": "",
 						"messages": [
-							{"id": 1, "dialogId": 10, "whoSend": "client", "text": "hi", "dateTimeUTC": "2026-03-10 10:00:00"},
-							{"id": 2, "dialogId": 10, "whoSend": "client", "text": "there", "dateTimeUTC": "2026-03-11 10:00:00"}
-						],
-						"operators": []
+							{"id": 1, "dialogId": 10, "whoSend": "client",   "text": "hi",    "dateTimeUTC": "2026-03-10 10:00:00"},
+							{"id": 2, "dialogId": 10, "whoSend": "operator", "text": "hello", "dateTimeUTC": "2026-03-11 10:00:00"}
+						]
 					},
 					{
 						"clientId": "c2",
+						"phone": "79009998877",
 						"messages": [
 							{"id": 3, "dialogId": 20, "whoSend": "client", "text": "hey", "dateTimeUTC": "2026-03-12 10:00:00"}
-						],
-						"operators": []
+						]
 					}
 				]
 			}`)),
 		}, nil
 	}), 0)
 
-	msgs, err := client.ListRecentClientMessages(context.Background(), time.Now().Add(-time.Hour), time.Now())
+	dialogs, err := client.ListDialogs(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
-		t.Fatalf("ListRecentClientMessages() error = %v", err)
+		t.Fatalf("ListDialogs() error = %v", err)
 	}
 
-	if len(msgs) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	if len(dialogs) != 2 {
+		t.Fatalf("expected 2 dialogs, got %d", len(dialogs))
+	}
+
+	// Find by ID for stable assertions regardless of map iteration order.
+	byID := make(map[int64]Dialog, len(dialogs))
+	for _, d := range dialogs {
+		byID[d.ID] = d
+	}
+
+	d10 := byID[10]
+	if d10.ClientID != "c1" || d10.Phone != "" || len(d10.Messages) != 2 {
+		t.Fatalf("dialog 10 = %+v", d10)
+	}
+
+	d20 := byID[20]
+	if d20.ClientID != "c2" || d20.Phone != "79009998877" || len(d20.Messages) != 1 {
+		t.Fatalf("dialog 20 = %+v", d20)
 	}
 }
 
-func TestGetDialog(t *testing.T) {
-	client := NewClient("https://example.com", "secret", roundTripFunc(func(req *http.Request) (*http.Response, error) {
+func TestListDialogsNoPhone(t *testing.T) {
+	client := NewClient("https://example.com", "secret", "operator", roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body: io.NopCloser(strings.NewReader(`{
 				"success": true,
-				"result": {
-					"dialog": {
-						"dialogId": 77,
-						"clientId": "client-1",
-						"client": {
-							"clientId": "client-1",
-							"phone": "79001234567"
-						}
-					},
-					"messages": [
-						{
-							"id": 1,
-							"dialogId": 77,
-							"whoSend": "client",
-							"text": "hi",
-							"dateTimeUTC": "2026-03-15 12:00:00"
-						},
-						{
-							"id": 2,
-							"dialogId": 77,
-							"whoSend": "operator",
-							"text": "hello",
-							"dateTimeUTC": "2026-03-15 13:00:00"
-						}
-					]
-				}
-			}`)),
-		}, nil
-	}), 0)
-
-	dialog, err := client.GetDialog(context.Background(), 77)
-	if err != nil {
-		t.Fatalf("GetDialog() error = %v", err)
-	}
-
-	if dialog.ID != 77 {
-		t.Fatalf("dialog.ID = %d", dialog.ID)
-	}
-	if dialog.ClientID != "client-1" {
-		t.Fatalf("dialog.ClientID = %q", dialog.ClientID)
-	}
-	if dialog.Phone != "79001234567" {
-		t.Fatalf("dialog.Phone = %q", dialog.Phone)
-	}
-	if len(dialog.Messages) != 2 {
-		t.Fatalf("len(dialog.Messages) = %d", len(dialog.Messages))
-	}
-}
-
-func TestGetDialogNoPhone(t *testing.T) {
-	client := NewClient("https://example.com", "secret", roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body: io.NopCloser(strings.NewReader(`{
-				"success": true,
-				"result": {
-					"dialog": {
-						"dialogId": 50,
+				"result": [
+					{
 						"clientId": "c-no-phone",
-						"client": {"clientId": "c-no-phone"}
-					},
-					"messages": []
-				}
+						"messages": [
+							{"id": 1, "dialogId": 50, "whoSend": "client", "text": "hi", "dateTimeUTC": "2026-03-15 12:00:00"}
+						]
+					}
+				]
 			}`)),
 		}, nil
 	}), 0)
 
-	dialog, err := client.GetDialog(context.Background(), 50)
+	dialogs, err := client.ListDialogs(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
-		t.Fatalf("GetDialog() error = %v", err)
+		t.Fatalf("ListDialogs() error = %v", err)
 	}
 
-	if dialog.Phone != "" {
-		t.Fatalf("expected empty phone, got %q", dialog.Phone)
+	if len(dialogs) != 1 || dialogs[0].Phone != "" {
+		t.Fatalf("expected 1 dialog with empty phone, got %+v", dialogs)
 	}
 }

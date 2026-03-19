@@ -18,28 +18,36 @@ const (
 type Config struct {
 	APIBaseURL     string
 	APIToken       string
+	OperatorLogin  string
 	DatabaseURL    string
 	PollInterval   time.Duration
 	TaskTimeout    time.Duration
 	RequestTimeout time.Duration
 	LookbackWindow time.Duration
 	MetricsAddr    string
+	DryRun         bool
 }
 
 func Load() (Config, error) {
 	cfg := Config{
 		APIBaseURL:     getenv("API_BASE_URL", defaultAPIBaseURL),
 		APIToken:       os.Getenv("API_TOKEN"),
+		OperatorLogin:  os.Getenv("OPERATOR_LOGIN"),
 		DatabaseURL:    os.Getenv("DATABASE_URL"),
 		PollInterval:   durationEnv("POLL_INTERVAL", defaultPollInterval),
 		TaskTimeout:    durationEnv("TASK_TIMEOUT", defaultTaskTimeout),
 		RequestTimeout: durationEnv("REQUEST_TIMEOUT", defaultRequestTimeout),
 		LookbackWindow: durationEnv("LOOKBACK_WINDOW", defaultLookbackWindow),
 		MetricsAddr:    getenv("METRICS_ADDR", defaultMetricsAddr),
+		DryRun:         os.Getenv("DRY_RUN") == "true",
 	}
 
 	if cfg.APIToken == "" {
 		return Config{}, fmt.Errorf("API_TOKEN is required")
+	}
+
+	if cfg.OperatorLogin == "" {
+		return Config{}, fmt.Errorf("OPERATOR_LOGIN is required")
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -74,4 +82,3 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 
 	return parsed
 }
-

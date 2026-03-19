@@ -7,6 +7,7 @@ import (
 
 func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("API_TOKEN", "token")
+	t.Setenv("OPERATOR_LOGIN", "bot")
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("API_BASE_URL", "")
 	t.Setenv("POLL_INTERVAL", "")
@@ -42,6 +43,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 
 func TestLoadParsesDurations(t *testing.T) {
 	t.Setenv("API_TOKEN", "token")
+	t.Setenv("OPERATOR_LOGIN", "bot")
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("POLL_INTERVAL", "2m")
 	t.Setenv("TASK_TIMEOUT", "45s")
@@ -69,6 +71,7 @@ func TestLoadParsesDurations(t *testing.T) {
 
 func TestLoadRequiresAPIToken(t *testing.T) {
 	t.Setenv("API_TOKEN", "")
+	t.Setenv("OPERATOR_LOGIN", "bot")
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 
 	if _, err := Load(); err == nil {
@@ -76,8 +79,19 @@ func TestLoadRequiresAPIToken(t *testing.T) {
 	}
 }
 
+func TestLoadRequiresOperatorLogin(t *testing.T) {
+	t.Setenv("API_TOKEN", "token")
+	t.Setenv("OPERATOR_LOGIN", "")
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected error for missing OPERATOR_LOGIN")
+	}
+}
+
 func TestLoadRequiresDatabaseURL(t *testing.T) {
 	t.Setenv("API_TOKEN", "token")
+	t.Setenv("OPERATOR_LOGIN", "bot")
 	t.Setenv("DATABASE_URL", "")
 
 	if _, err := Load(); err == nil {

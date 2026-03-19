@@ -3,7 +3,6 @@ package reminders
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +13,12 @@ const (
 	StatusWaitingSecond = "waiting_second"
 	StatusCompleted     = "completed"
 	StatusPhoneReceived = "phone_received"
+
+	firstReminderText = "Подскажите, вы ещё в поиске авто?\n" +
+		"У нас как раз появилось несколько интересных вариантов — часть уже добавили в профиль.\n" +
+		"Могу отправить фото и честно рассказать, какие действительно стоят внимания."
+
+	secondReminderText = "Е.АВТО на связи 🤙 и в нашем профиле появилось уже более 30 новых объявлений. Выбери свой!"
 )
 
 type Message struct {
@@ -30,8 +35,8 @@ type Dialog struct {
 }
 
 type Source interface {
-	ListRecentClientMessages(context.Context, time.Time, time.Time) ([]Message, error)
-	GetDialog(context.Context, int64) (Dialog, error)
+	ListDialogs(context.Context, time.Time, time.Time) ([]Dialog, error)
+	SendMessage(ctx context.Context, clientID, text string) error
 }
 
 type Store interface {
@@ -48,14 +53,14 @@ type Metrics interface {
 }
 
 type ChatState struct {
-	ChatID              int64
-	ClientID            string
-	Status              string
-	Phone               string
-	LastClientMessageAt time.Time
-	FirstReminderAt     *time.Time
-	SecondReminderAt    *time.Time
-	UpdatedAt           time.Time
+	ChatID           int64
+	ClientID         string
+	Status           string
+	Phone            string
+	LastMessageAt    time.Time
+	FirstReminderAt  *time.Time
+	SecondReminderAt *time.Time
+	UpdatedAt        time.Time
 }
 
 type Service struct {
@@ -67,9 +72,10 @@ type Service struct {
 	lookback    time.Duration
 	firstDelay  time.Duration
 	secondDelay time.Duration
+	dryRun      bool
 }
 
-func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics, now func() time.Time, lookback time.Duration) *Service {
+func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics, now func() time.Time, lookback time.Duration, dryRun bool) *Service {
 	if now == nil {
 		now = time.Now
 	}
@@ -82,23 +88,23 @@ func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics,
 		now:         now,
 		lookback:    lookback,
 		firstDelay:  72 * time.Hour,
-		secondDelay: 168 * time.Hour,
+		secondDelay: 96 * time.Hour, // 4 days after first reminder = day 7
+		dryRun:      dryRun,
 	}
 }
 
 func (s *Service) Run(ctx context.Context) error {
 	now := s.now().UTC()
-	candidates, err := s.source.ListRecentClientMessages(ctx, now.Add(-s.lookback), now)
+	dialogs, err := s.source.ListDialogs(ctx, now.Add(-s.lookback), now)
 	if err != nil {
 		s.metrics.ObserveRun("failed")
-		return fmt.Errorf("list candidate messages: %w", err)
+		return fmt.Errorf("list dialogs: %w", err)
 	}
 
-	latest := latestByDialog(candidates)
-	s.metrics.ObserveCandidates(len(latest))
+	s.metrics.ObserveCandidates(len(dialogs))
 
-	for _, msg := range latest {
-		if err := s.processDialog(ctx, now, msg); err != nil {
+	for _, dialog := range dialogs {
+		if err := s.processDialog(ctx, now, dialog); err != nil {
 			s.metrics.ObserveRun("failed")
 			return err
 		}
@@ -108,14 +114,9 @@ func (s *Service) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) processDialog(ctx context.Context, now time.Time, candidate Message) error {
-	dialog, err := s.source.GetDialog(ctx, candidate.DialogID)
-	if err != nil {
-		return fmt.Errorf("get dialog %d: %w", candidate.DialogID, err)
-	}
-
+func (s *Service) processDialog(ctx context.Context, now time.Time, dialog Dialog) error {
 	lastMsg, ok := lastMessage(dialog.Messages)
-	if !ok || lastMsg.WhoSend != "client" {
+	if !ok {
 		return nil
 	}
 
@@ -126,25 +127,29 @@ func (s *Service) processDialog(ctx context.Context, now time.Time, candidate Me
 
 	phone := strings.TrimSpace(dialog.Phone)
 
-	// First reminder: no state yet, phone absent, 3+ days since last client message.
+	// First reminder: no state yet, phone absent, 3+ days since last message (from anyone).
 	if !exists && phone == "" && now.Sub(lastMsg.SentAt) >= s.firstDelay {
 		firstAt := now
 		state = ChatState{
-			ChatID:              dialog.ID,
-			ClientID:            dialog.ClientID,
-			Status:              StatusWaitingSecond,
-			LastClientMessageAt: lastMsg.SentAt,
-			FirstReminderAt:     &firstAt,
-			UpdatedAt:           now,
+			ChatID:          dialog.ID,
+			ClientID:        dialog.ClientID,
+			Status:          StatusWaitingSecond,
+			LastMessageAt:   lastMsg.SentAt,
+			FirstReminderAt: &firstAt,
+			UpdatedAt:       now,
+		}
+		if err := s.send(ctx, dialog, firstReminderText); err != nil {
+			return fmt.Errorf("send first reminder for dialog %d: %w", dialog.ID, err)
 		}
 		if err := s.store.Save(ctx, state); err != nil {
 			return fmt.Errorf("save first reminder state for dialog %d: %w", dialog.ID, err)
 		}
 		s.metrics.ObserveFirstReminder()
-		s.logger.Info("simulated first reminder",
+		s.logger.Info("sent first reminder",
 			zap.Int64("chat_id", dialog.ID),
 			zap.String("client_id", dialog.ClientID),
-			zap.Time("last_client_message_at", lastMsg.SentAt),
+			zap.Time("last_message_at", lastMsg.SentAt),
+			zap.Bool("dry_run", s.dryRun),
 		)
 		return nil
 	}
@@ -170,8 +175,8 @@ func (s *Service) processDialog(ctx context.Context, now time.Time, candidate Me
 		return nil
 	}
 
-	// Second reminder: 7+ days since last client message.
-	if now.Sub(lastMsg.SentAt) < s.secondDelay {
+	// Second reminder: 4+ days since first reminder (= ~day 7 from last message).
+	if now.Sub(*state.FirstReminderAt) < s.secondDelay {
 		return nil
 	}
 
@@ -179,44 +184,33 @@ func (s *Service) processDialog(ctx context.Context, now time.Time, candidate Me
 	state.Status = StatusCompleted
 	state.SecondReminderAt = &secondAt
 	state.UpdatedAt = now
+	if err := s.send(ctx, dialog, secondReminderText); err != nil {
+		return fmt.Errorf("send second reminder for dialog %d: %w", dialog.ID, err)
+	}
 	if err := s.store.Save(ctx, state); err != nil {
 		return fmt.Errorf("save second reminder state for dialog %d: %w", dialog.ID, err)
 	}
 	s.metrics.ObserveSecondReminder()
-	s.logger.Info("simulated second reminder",
+	s.logger.Info("sent second reminder",
 		zap.Int64("chat_id", dialog.ID),
 		zap.String("client_id", dialog.ClientID),
-		zap.Time("last_client_message_at", lastMsg.SentAt),
+		zap.Time("last_message_at", lastMsg.SentAt),
+		zap.Bool("dry_run", s.dryRun),
 	)
 	return nil
 }
 
-// latestByDialog returns the latest message per dialog ID, sorted oldest-first.
-func latestByDialog(messages []Message) []Message {
-	byDialog := make(map[int64]Message, len(messages))
-	for _, msg := range messages {
-		if current, ok := byDialog[msg.DialogID]; !ok || msg.SentAt.After(current.SentAt) {
-			byDialog[msg.DialogID] = msg
-		}
+// send sends a message or logs it in dry-run mode.
+func (s *Service) send(ctx context.Context, dialog Dialog, text string) error {
+	if s.dryRun {
+		s.logger.Info("[DRY RUN] would send message",
+			zap.Int64("dialog_id", dialog.ID),
+			zap.String("client_id", dialog.ClientID),
+			zap.String("text", text),
+		)
+		return nil
 	}
-
-	items := make([]Message, 0, len(byDialog))
-	for _, msg := range byDialog {
-		items = append(items, msg)
-	}
-
-	slices.SortFunc(items, func(a, b Message) int {
-		switch {
-		case a.SentAt.Before(b.SentAt):
-			return -1
-		case a.SentAt.After(b.SentAt):
-			return 1
-		default:
-			return 0
-		}
-	})
-
-	return items
+	return s.source.SendMessage(ctx, dialog.ClientID, text)
 }
 
 func lastMessage(messages []Message) (Message, bool) {
