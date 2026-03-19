@@ -38,7 +38,7 @@ configs/            — .env.example
 | `SECOND_REMINDER_DELAY` |              | `96h` (4 дня после первого) | Задержка перед вторым напоминанием      |
 | `METRICS_ADDR`    |              | `:8080`                              | Адрес HTTP-сервера метрик           |
 | `DRY_RUN`         |              | `false`                              | Логировать вместо отправки          |
-| `TEST_DIALOG_ID`  |              | —                                    | Обрабатывать только этот диалог     |
+| `TEST_DIALOG_IDS` |              | —                                    | Обрабатывать только эти диалоги (через запятую) |
 
 ## Запуск
 
@@ -74,7 +74,7 @@ go run ./cmd/reengage
 Установите `TEST_DIALOG_ID=<id>` — планировщик работает штатно, но на каждом тике обрабатывается только указанный диалог. Удобно комбинировать с `DRY_RUN=true`:
 
 ```bash
-TEST_DIALOG_ID=24562 DRY_RUN=true go run ./cmd/reengage
+TEST_DIALOG_IDS=24562,24563 DRY_RUN=true go run ./cmd/reengage
 ```
 
 Метрики Prometheus доступны на `http://localhost:8080/metrics`.

@@ -50,7 +50,7 @@ func New() (*App, error) {
 	svcMetrics := metrics.New()
 
 	source := &chatSource{client: apiClient}
-	service := reminders.NewService(source, pgStore, logger, svcMetrics, time.Now, cfg.LookbackWindow, cfg.FirstDelay, cfg.SecondDelay, cfg.DryRun, cfg.TestDialogID)
+	service := reminders.NewService(source, pgStore, logger, svcMetrics, time.Now, cfg.LookbackWindow, cfg.FirstDelay, cfg.SecondDelay, cfg.DryRun, cfg.TestDialogIDs)
 	task := tasks.NewSyncTask(service)
 
 	stdLogger := zap.NewStdLog(logger)

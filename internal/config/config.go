@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -31,7 +32,7 @@ type Config struct {
 	SecondDelay    time.Duration
 	MetricsAddr    string
 	DryRun         bool
-	TestDialogID   int64 // if non-zero: process only this dialog
+	TestDialogIDs  []int64 // if non-empty: process only these dialogs
 }
 
 func Load() (Config, error) {
@@ -47,8 +48,8 @@ func Load() (Config, error) {
 		FirstDelay:     durationEnv("FIRST_REMINDER_DELAY", defaultFirstDelay),
 		SecondDelay:    durationEnv("SECOND_REMINDER_DELAY", defaultSecondDelay),
 		MetricsAddr:    getenv("METRICS_ADDR", defaultMetricsAddr),
-		DryRun:         os.Getenv("DRY_RUN") == "true",
-		TestDialogID:   int64Env("TEST_DIALOG_ID"),
+		DryRun:        os.Getenv("DRY_RUN") == "true",
+		TestDialogIDs: int64ListEnv("TEST_DIALOG_IDS"),
 	}
 
 	if cfg.APIToken == "" {
@@ -78,9 +79,19 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
-func int64Env(key string) int64 {
-	v, _ := strconv.ParseInt(os.Getenv(key), 10, 64)
-	return v
+func int64ListEnv(key string) []int64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	ids := make([]int64, 0, len(parts))
+	for _, p := range parts {
+		if v, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64); err == nil {
+			ids = append(ids, v)
+		}
+	}
+	return ids
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {

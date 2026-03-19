@@ -73,25 +73,30 @@ type Service struct {
 	firstDelay   time.Duration
 	secondDelay  time.Duration
 	dryRun       bool
-	testDialogID int64 // if non-zero: process only this dialog
+	testDialogIDs map[int64]struct{} // if non-empty: process only these dialogs
 }
 
-func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics, now func() time.Time, lookback, firstDelay, secondDelay time.Duration, dryRun bool, testDialogID int64) *Service {
+func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics, now func() time.Time, lookback, firstDelay, secondDelay time.Duration, dryRun bool, testDialogIDs []int64) *Service {
 	if now == nil {
 		now = time.Now
 	}
 
+	filter := make(map[int64]struct{}, len(testDialogIDs))
+	for _, id := range testDialogIDs {
+		filter[id] = struct{}{}
+	}
+
 	return &Service{
-		source:       source,
-		store:        store,
-		logger:       logger,
-		metrics:      metrics,
-		now:          now,
-		lookback:     lookback,
-		firstDelay:   firstDelay,
-		secondDelay:  secondDelay,
-		dryRun:       dryRun,
-		testDialogID: testDialogID,
+		source:        source,
+		store:         store,
+		logger:        logger,
+		metrics:       metrics,
+		now:           now,
+		lookback:      lookback,
+		firstDelay:    firstDelay,
+		secondDelay:   secondDelay,
+		dryRun:        dryRun,
+		testDialogIDs: filter,
 	}
 }
 
@@ -103,9 +108,9 @@ func (s *Service) Run(ctx context.Context) error {
 		return fmt.Errorf("list dialogs: %w", err)
 	}
 
-	if s.testDialogID != 0 {
-		s.logger.Info("test mode: filtering to single dialog", zap.Int64("dialog_id", s.testDialogID))
-		dialogs = filterDialogs(dialogs, s.testDialogID)
+	if len(s.testDialogIDs) > 0 {
+		s.logger.Info("test mode: filtering dialogs", zap.Int("count", len(s.testDialogIDs)))
+		dialogs = filterDialogs(dialogs, s.testDialogIDs)
 	}
 
 	s.metrics.ObserveCandidates(len(dialogs))
@@ -240,13 +245,14 @@ func (s *Service) send(ctx context.Context, dialog Dialog, text string) error {
 	return nil
 }
 
-func filterDialogs(dialogs []Dialog, id int64) []Dialog {
+func filterDialogs(dialogs []Dialog, ids map[int64]struct{}) []Dialog {
+	result := make([]Dialog, 0, len(ids))
 	for _, d := range dialogs {
-		if d.ID == id {
-			return []Dialog{d}
+		if _, ok := ids[d.ID]; ok {
+			result = append(result, d)
 		}
 	}
-	return nil
+	return result
 }
 
 func lastMessage(messages []Message) (Message, bool) {
