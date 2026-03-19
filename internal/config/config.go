@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -13,7 +12,6 @@ const (
 	defaultTaskTimeout    = 30 * time.Second
 	defaultRequestTimeout = 15 * time.Second
 	defaultLookbackWindow = 8 * 24 * time.Hour // 8 days (API max is 14 days)
-	defaultPageLimit      = 200
 	defaultMetricsAddr    = ":8080"
 )
 
@@ -77,16 +75,3 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
-func intEnv(key string, fallback int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed <= 0 {
-		return fallback
-	}
-
-	return parsed
-}
