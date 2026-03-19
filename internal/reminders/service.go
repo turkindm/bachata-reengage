@@ -64,32 +64,34 @@ type ChatState struct {
 }
 
 type Service struct {
-	source      Source
-	store       Store
-	logger      *zap.Logger
-	metrics     Metrics
-	now         func() time.Time
-	lookback    time.Duration
-	firstDelay  time.Duration
-	secondDelay time.Duration
-	dryRun      bool
+	source       Source
+	store        Store
+	logger       *zap.Logger
+	metrics      Metrics
+	now          func() time.Time
+	lookback     time.Duration
+	firstDelay   time.Duration
+	secondDelay  time.Duration
+	dryRun       bool
+	testDialogID int64 // if non-zero: process only this dialog
 }
 
-func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics, now func() time.Time, lookback time.Duration, dryRun bool) *Service {
+func NewService(source Source, store Store, logger *zap.Logger, metrics Metrics, now func() time.Time, lookback time.Duration, dryRun bool, testDialogID int64) *Service {
 	if now == nil {
 		now = time.Now
 	}
 
 	return &Service{
-		source:      source,
-		store:       store,
-		logger:      logger,
-		metrics:     metrics,
-		now:         now,
-		lookback:    lookback,
-		firstDelay:  72 * time.Hour,
-		secondDelay: 96 * time.Hour, // 4 days after first reminder = day 7
-		dryRun:      dryRun,
+		source:       source,
+		store:        store,
+		logger:       logger,
+		metrics:      metrics,
+		now:          now,
+		lookback:     lookback,
+		firstDelay:   72 * time.Hour,
+		secondDelay:  96 * time.Hour, // 4 days after first reminder = day 7
+		dryRun:       dryRun,
+		testDialogID: testDialogID,
 	}
 }
 
@@ -99,6 +101,11 @@ func (s *Service) Run(ctx context.Context) error {
 	if err != nil {
 		s.metrics.ObserveRun("failed")
 		return fmt.Errorf("list dialogs: %w", err)
+	}
+
+	if s.testDialogID != 0 {
+		s.logger.Info("test mode: filtering to single dialog", zap.Int64("dialog_id", s.testDialogID))
+		dialogs = filterDialogs(dialogs, s.testDialogID)
 	}
 
 	s.metrics.ObserveCandidates(len(dialogs))
@@ -211,6 +218,15 @@ func (s *Service) send(ctx context.Context, dialog Dialog, text string) error {
 		return nil
 	}
 	return s.source.SendMessage(ctx, dialog.ClientID, text)
+}
+
+func filterDialogs(dialogs []Dialog, id int64) []Dialog {
+	for _, d := range dialogs {
+		if d.ID == id {
+			return []Dialog{d}
+		}
+	}
+	return nil
 }
 
 func lastMessage(messages []Message) (Message, bool) {

@@ -50,7 +50,7 @@ func New() (*App, error) {
 	svcMetrics := metrics.New()
 
 	source := &chatSource{client: apiClient}
-	service := reminders.NewService(source, pgStore, logger, svcMetrics, time.Now, cfg.LookbackWindow, cfg.DryRun)
+	service := reminders.NewService(source, pgStore, logger, svcMetrics, time.Now, cfg.LookbackWindow, cfg.DryRun, cfg.TestDialogID)
 	task := tasks.NewSyncTask(service)
 
 	stdLogger := zap.NewStdLog(logger)
@@ -79,19 +79,19 @@ func New() (*App, error) {
 }
 
 func (a *App) Run(ctx context.Context) error {
-	errCh := make(chan error, 1)
-	go func() {
-		if err := a.metricsHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- fmt.Errorf("run metrics server: %w", err)
-		}
-	}()
-
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = a.metricsHTTP.Shutdown(shutdownCtx)
 		_ = a.closeStore()
 		_ = a.logger.Sync()
+	}()
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := a.metricsHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("run metrics server: %w", err)
+		}
 	}()
 
 	runDone := make(chan error, 1)

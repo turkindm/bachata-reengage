@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type Config struct {
 	LookbackWindow time.Duration
 	MetricsAddr    string
 	DryRun         bool
+	TestDialogID   int64 // if non-zero: process only this dialog, run once and exit
 }
 
 func Load() (Config, error) {
@@ -40,6 +42,7 @@ func Load() (Config, error) {
 		LookbackWindow: durationEnv("LOOKBACK_WINDOW", defaultLookbackWindow),
 		MetricsAddr:    getenv("METRICS_ADDR", defaultMetricsAddr),
 		DryRun:         os.Getenv("DRY_RUN") == "true",
+		TestDialogID:   int64Env("TEST_DIALOG_ID"),
 	}
 
 	if cfg.APIToken == "" {
@@ -67,6 +70,11 @@ func getenv(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+func int64Env(key string) int64 {
+	v, _ := strconv.ParseInt(os.Getenv(key), 10, 64)
+	return v
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {

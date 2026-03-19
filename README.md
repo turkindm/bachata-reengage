@@ -35,6 +35,8 @@ configs/            — .env.example
 | `REQUEST_TIMEOUT` |              | `15s`                                | Таймаут HTTP-запроса к API          |
 | `LOOKBACK_WINDOW` |              | `192h` (8 дней)                      | Глубина поиска сообщений            |
 | `METRICS_ADDR`    |              | `:8080`                              | Адрес HTTP-сервера метрик           |
+| `DRY_RUN`         |              | `false`                              | Логировать вместо отправки          |
+| `TEST_DIALOG_ID`  |              | —                                    | Обрабатывать только этот диалог     |
 
 ## Запуск
 
@@ -64,6 +66,14 @@ go run ./cmd/reengage
 ### Dry-run (без реальной отправки)
 
 Установите `DRY_RUN=true` в `configs/.env` — сервис будет логировать сообщения, но не отправлять их.
+
+### Тест на одном диалоге
+
+Установите `TEST_DIALOG_ID=<id>` — планировщик работает штатно, но на каждом тике обрабатывается только указанный диалог. Удобно комбинировать с `DRY_RUN=true`:
+
+```bash
+TEST_DIALOG_ID=24562 DRY_RUN=true go run ./cmd/reengage
+```
 
 Метрики Prometheus доступны на `http://localhost:8080/metrics`.
 
