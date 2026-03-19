@@ -46,7 +46,7 @@ func New() (*App, error) {
 	}
 
 	httpClient := &http.Client{Timeout: cfg.RequestTimeout}
-	apiClient := api.NewClient(cfg.APIBaseURL, cfg.APIToken, httpClient)
+	apiClient := api.NewClient(cfg.APIBaseURL, cfg.APIToken, httpClient, 80)
 	svcMetrics := metrics.New()
 
 	source := &chatSource{client: apiClient}

@@ -22,6 +22,7 @@ type Client struct {
 	baseURL string
 	token   string
 	doer    Doer
+	tick    <-chan time.Time // rate limiter: one token per tick
 }
 
 // Message is a single chat message returned by the API.
@@ -41,11 +42,19 @@ type Dialog struct {
 	Messages []Message
 }
 
-func NewClient(baseURL, token string, doer Doer) *Client {
+// NewClient creates a new Bachata API client limited to ratePerMin requests per minute.
+// Pass ratePerMin=0 to disable rate limiting.
+func NewClient(baseURL, token string, doer Doer, ratePerMin int) *Client {
+	var tick <-chan time.Time
+	if ratePerMin > 0 {
+		interval := time.Minute / time.Duration(ratePerMin)
+		tick = time.NewTicker(interval).C
+	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		doer:    doer,
+		tick:    tick,
 	}
 }
 
@@ -135,7 +144,23 @@ func (c *Client) GetDialog(ctx context.Context, dialogID int64) (Dialog, error) 
 	}, nil
 }
 
+func (c *Client) wait(ctx context.Context) error {
+	if c.tick == nil {
+		return nil
+	}
+	select {
+	case <-c.tick:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (c *Client) post(ctx context.Context, path string, payload any, dst any) error {
+	if err := c.wait(ctx); err != nil {
+		return fmt.Errorf("rate limiter: %w", err)
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)

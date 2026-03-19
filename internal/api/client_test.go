@@ -49,7 +49,7 @@ func TestListRecentClientMessages(t *testing.T) {
 				]
 			}`)),
 		}, nil
-	}))
+	}), 0)
 
 	msgs, err := client.ListRecentClientMessages(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
@@ -91,7 +91,7 @@ func TestListRecentClientMessagesMultipleClients(t *testing.T) {
 				]
 			}`)),
 		}, nil
-	}))
+	}), 0)
 
 	msgs, err := client.ListRecentClientMessages(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	if err != nil {
@@ -137,7 +137,7 @@ func TestGetDialog(t *testing.T) {
 				}
 			}`)),
 		}, nil
-	}))
+	}), 0)
 
 	dialog, err := client.GetDialog(context.Background(), 77)
 	if err != nil {
@@ -174,7 +174,7 @@ func TestGetDialogNoPhone(t *testing.T) {
 				}
 			}`)),
 		}, nil
-	}))
+	}), 0)
 
 	dialog, err := client.GetDialog(context.Background(), 50)
 	if err != nil {
